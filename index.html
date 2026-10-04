@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="id"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Gudang – Scan Barang</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px/1.4 system-ui,Arial,sans-serif;background:#f3f4f6;color:#111}
+header{background:#1d4ed8;color:#fff;padding:10px 14px;display:flex;justify-content:space-between;align-items:center}
+.tabs{display:flex}.tabs button{flex:1;padding:12px;border:0;background:#e5e7eb;font-size:15px;font-weight:600}
+.tabs button.on{background:#fff;border-bottom:3px solid #1d4ed8}
+main{padding:12px;max-width:560px;margin:auto}.card{background:#fff;border-radius:10px;padding:12px;margin-bottom:10px;box-shadow:0 1px 3px #0002}
+input,select,button{font:inherit;padding:10px;border:1px solid #cbd5e1;border-radius:8px;width:100%;margin-top:6px}
+button.p{background:#1d4ed8;color:#fff;border:0;font-weight:700}button.k{background:#dc2626;color:#fff;border:0;font-weight:700}
+video{width:100%;border-radius:8px;background:#000;max-height:260px}.mut{color:#6b7280;font-size:12px}
+.it{display:flex;justify-content:space-between;border-bottom:1px solid #eee;padding:6px 0;font-size:14px}
+#msg{position:fixed;bottom:10px;left:10px;right:10px;background:#111;color:#fff;padding:10px;border-radius:8px;display:none;text-align:center}
+</style></head><body>
+<div id="app"></div><div id="msg"></div>
+<script>
+const API_URL="https://script.google.com/macros/s/AKfycbwjJsWxnDjVTn1kPI3E8DmzoG9OYjBaspUYaQK_iEZEEfkVKv14X0qnOhmtuL7TGiGR/exec";
+const LS=(k,v)=>{try{if(v===undefined)return JSON.parse(localStorage.getItem(k));localStorage.setItem(k,JSON.stringify(v))}catch(e){return null}};
+let sess=LS("g_sess"),items=LS("g_items")||[],log=LS("g_log")||[],queue=LS("g_q")||[],tab="masuk",cur=null,stream=null,scanTimer=null;
+const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
+const toast=t=>{const m=$("msg");m.textContent=t;m.style.display="block";setTimeout(()=>m.style.display="none",2500)};
+async function api(b){const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...b,token:sess&&sess.token})});
+  const j=JSON.parse(await r.text());if(!j.ok){const e=new Error(j.error||"Gagal");e.auth=j.auth;throw e}return j}
+const saldo=k=>{const it=items.find(x=>x.kode===k);return(+(it&&it.awal)||0)+log.filter(l=>l.kode===k).reduce((a,l)=>a+(l.tipe==="masuk"?1:-1)*(+l.qty||0),0)};
+
+function render(){
+  stopScan();
+  if(!sess){$("app").innerHTML=`<header><b>📦 Gudang</b></header><main><div class="card"><b>Masukkan PIN</b>
+   <input id="pin" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="font-size:22px;text-align:center;letter-spacing:6px">
+   <button class="p" id="go">Masuk</button><div id="lm" class="mut"></div></div></main>`;
+   const masuk=async()=>{try{$("lm").textContent="Memproses…";const r=await api({action:"pinLogin",pin:$("pin").value.trim()});
+     sess={token:r.token,username:r.user.username};LS("g_sess",sess);await sync();render()}catch(e){$("lm").textContent=e.message}};
+   $("go").onclick=masuk;$("pin").onkeydown=e=>{if(e.key==="Enter")masuk()};return}
+  const tk=tab==="riwayat";
+  $("app").innerHTML=`<header><b>📦 Gudang</b><span class="mut" style="color:#dbeafe">${esc(sess.username)} · antrian: ${queue.length} <a href="#" id="out" style="color:#fff">keluar</a></span></header>
+  <div class="tabs"><button data-t="masuk" class="${tab==="masuk"?"on":""}">⬇ Barang Masuk</button><button data-t="keluar" class="${tab==="keluar"?"on":""}">⬆ Barang Keluar</button><button data-t="riwayat" class="${tk?"on":""}">Riwayat</button></div><main>`+
+  (tk?`<div class="card"><b>Transaksi hari ini</b>${log.filter(l=>l.tgl===today()).map(l=>{const it=items.find(x=>x.kode===l.kode)||{nama:l.kode,satuan:""};return`<div class="it"><span>${l.tipe==="masuk"?"⬇":"⬆"} ${esc(it.nama)}</span><b>${l.qty} ${esc(it.satuan)}</b></div>`}).join("")||'<div class="mut">Belum ada.</div>'}</div>
+   <button class="p" id="sync">☁ Kirim antrian & perbarui daftar barang</button>`
+  :`<div class="card"><button class="p" id="scan">📷 Scan Barcode</button><video id="vid" playsinline muted style="display:none;margin-top:8px"></video>
+   <input id="kode" placeholder="atau ketik / scan alat: kode barang lalu Enter" autocomplete="off">
+   <select id="pil"><option value="">— atau pilih barang (${items.length}) —</option>${items.map(x=>`<option value="${esc(x.kode)}">${esc(x.nama)} · ${x.jenis==="ops"?"Ops":"Bahan"}</option>`).join("")}</select></div>
+   <div class="card" id="form">${cur?formHtml():'<span class="mut">Scan atau pilih barang terlebih dahulu.</span>'}</div>`)+`</main>`;
+  document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;cur=null;render()});
+  $("out").onclick=e=>{e.preventDefault();if(queue.length&&!confirm("Ada data belum terkirim, tetap keluar?"))return;sess=null;LS("g_sess",null);render()};
+  if(tk){$("sync").onclick=async()=>{await flush();await sync();render()};return}
+  $("scan").onclick=startScan;$("pil").onchange=e=>pick(e.target.value);
+  $("kode").onkeydown=e=>{if(e.key==="Enter"){pick($("kode").value.trim());e.target.value=""}};
+  if(cur)bindForm();
+}
+function formHtml(){const it=items.find(x=>x.kode===cur);return`<b>${esc(it.nama)}</b><div class="mut">Kode ${esc(it.kode)} · Stok saat ini: ${saldo(it.kode)} ${esc(it.satuan)}</div>
+  <input id="qty" type="number" step="any" inputmode="decimal" placeholder="Jumlah (${esc(it.satuan||"satuan")})"><input id="ket" placeholder="Keterangan (opsional)">
+  <button class="${tab==="masuk"?"p":"k"}" id="kirim">${tab==="masuk"?"Simpan Barang Masuk":"Simpan Barang Keluar"}</button>`}
+function bindForm(){$("qty").focus();$("kirim").onclick=()=>{const q=parseFloat($("qty").value);if(!q||q<=0)return toast("Isi jumlah dengan benar");
+  if(tab==="keluar"&&q>saldo(cur)&&!confirm("Jumlah melebihi stok ("+saldo(cur)+"). Tetap simpan?"))return;
+  const row={id:"g"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tgl:today(),tipe:tab,kode:cur,qty:q,ket:$("ket").value.trim(),oleh:sess.username};
+  log.push(row);queue.push(row);LS("g_log",log);LS("g_q",queue);cur=null;toast("Tersimpan ✔");render();flush()}}
+function pick(k){k=(k||"").trim();if(!k)return;const it=items.find(x=>x.kode.toLowerCase()===k.toLowerCase())||items.find(x=>x.nama.toLowerCase()===k.toLowerCase());
+  if(!it){toast("Barang tidak ditemukan: "+k);return}cur=it.kode;stopScan();render()}
+async function flush(){if(!queue.length||!sess)return;try{await api({action:"stokAdd",rows:queue});queue=[];LS("g_q",queue);toast("Terkirim ke database ✔")}catch(e){if(e.auth){sess=null;LS("g_sess",null)}toast("Belum terkirim (antrian disimpan): "+e.message)}
+  if(!document.hidden)render()}
+async function sync(){try{const r=await api({action:"stokGet"});items=r.items||[];const pend=new Set(queue.map(x=>x.id));log=(r.log||[]).concat(queue.filter(x=>!(r.log||[]).some(l=>l.id===x.id)));LS("g_items",items);LS("g_log",log)}catch(e){toast("Offline – memakai data tersimpan")}}
+async function startScan(){
+  const v=$("vid");v.style.display="block";
+  try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});v.srcObject=stream;await v.play()}catch(e){v.style.display="none";return toast("Kamera tidak bisa dibuka (izinkan akses kamera / pakai HTTPS)")}
+  if("BarcodeDetector" in window){const det=new BarcodeDetector({formats:["code_128","ean_13","ean_8","code_39","qr_code"]});
+    scanTimer=setInterval(async()=>{try{const r=await det.detect(v);if(r.length)pick(r[0].rawValue)}catch(e){}},400)}
+  else{stopScan();v.style.display="none";const s=document.createElement("script");s.src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js";
+    s.onload=()=>{const d=document.createElement("div");d.id="rd";$("scan").after(d);window._h5=new Html5Qrcode("rd");_h5.start({facingMode:"environment"},{fps:10,qrbox:250},t=>{_h5.stop().catch(()=>{});pick(t)}).catch(()=>toast("Kamera gagal"))};
+    s.onerror=()=>toast("Scanner kamera tidak tersedia, pakai kolom kode / alat scan");document.head.appendChild(s)}
+}
+function stopScan(){clearInterval(scanTimer);if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}if(window._h5){try{_h5.stop().catch(()=>{})}catch(e){}window._h5=null}}
+window.addEventListener("online",flush);
+render();if(sess)sync().then(()=>{flush();render()});
+</script></body></html>
