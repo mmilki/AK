@@ -18,12 +18,15 @@ video{width:100%;border-radius:8px;background:#000;max-height:260px}.mut{color:#
 <script>
 const API_URL="https://script.google.com/macros/s/AKfycbwjJsWxnDjVTn1kPI3E8DmzoG9OYjBaspUYaQK_iEZEEfkVKv14X0qnOhmtuL7TGiGR/exec";
 const LS=(k,v)=>{try{if(v===undefined)return JSON.parse(localStorage.getItem(k));localStorage.setItem(k,JSON.stringify(v))}catch(e){return null}};
-let sess=LS("g_sess"),items=LS("g_items")||[],log=LS("g_log")||[],queue=LS("g_q")||[],tab="masuk",cur=null,stream=null,scanTimer=null;
+let kat=LS("g_kat")||"bahan",sess=LS("g_sess"),items=LS("g_items")||[],log=LS("g_log")||[],queue=LS("g_q")||[],tab="masuk",cur=null,stream=null,scanTimer=null;
 const $=id=>document.getElementById(id),esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const today=()=>{const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0")};
 const toast=t=>{const m=$("msg");m.textContent=t;m.style.display="block";setTimeout(()=>m.style.display="none",2500)};
 async function api(b){const r=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify({...b,token:sess&&sess.token})});
   const j=JSON.parse(await r.text());if(!j.ok){const e=new Error(j.error||"Gagal");e.auth=j.auth;throw e}return j}
+const KAT={bahan:{n:"BAHAN BAKU",c:"#15803d"},ops:{n:"OPERASIONAL",c:"#c2410c"}};
+const jenisOf=it=>it&&it.jenis==="ops"?"ops":"bahan";
+const badge=j=>`<span style="background:${KAT[j].c};color:#fff;border-radius:6px;padding:2px 8px;font-size:11px;font-weight:700">${KAT[j].n}</span>`;
 const saldo=k=>{const it=items.find(x=>x.kode===k);return(+(it&&it.awal)||0)+log.filter(l=>l.kode===k).reduce((a,l)=>a+(l.tipe==="masuk"?1:-1)*(+l.qty||0),0)};
 
 function render(){
@@ -37,20 +40,22 @@ function render(){
   const tk=tab==="riwayat";
   $("app").innerHTML=`<header><b>📦 Gudang</b><span class="mut" style="color:#dbeafe">${esc(sess.username)} · antrian: ${queue.length} <a href="#" id="out" style="color:#fff">keluar</a></span></header>
   <div class="tabs"><button data-t="masuk" class="${tab==="masuk"?"on":""}">⬇ Barang Masuk</button><button data-t="keluar" class="${tab==="keluar"?"on":""}">⬆ Barang Keluar</button><button data-t="riwayat" class="${tk?"on":""}">Riwayat</button></div><main>`+
-  (tk?`<div class="card"><b>Transaksi hari ini</b>${log.filter(l=>l.tgl===today()).map(l=>{const it=items.find(x=>x.kode===l.kode)||{nama:l.kode,satuan:""};return`<div class="it"><span>${l.tipe==="masuk"?"⬇":"⬆"} ${esc(it.nama)}</span><b>${l.qty} ${esc(it.satuan)}</b></div>`}).join("")||'<div class="mut">Belum ada.</div>'}</div>
+  (tk?`${["bahan","ops"].map(j=>`<div class="card" style="border-left:5px solid ${KAT[j].c}"><b>${badge(j)} Transaksi hari ini</b>${log.filter(l=>l.tgl===today()&&jenisOf(items.find(x=>x.kode===l.kode))===j).map(l=>{const it=items.find(x=>x.kode===l.kode)||{nama:l.kode,satuan:""};return`<div class="it"><span>${l.tipe==="masuk"?"⬇":"⬆"} ${esc(it.nama)}</span><b>${l.qty} ${esc(it.satuan)}</b></div>`}).join("")||'<div class="mut">Belum ada.</div>'}</div>`).join("")}
    <button class="p" id="sync">☁ Kirim antrian & perbarui daftar barang</button>`
-  :`<div class="card"><button class="p" id="scan">📷 Scan Barcode</button><video id="vid" playsinline muted style="display:none;margin-top:8px"></video>
+  :`<div class="card"><div style="display:flex;gap:8px"><button data-kat="bahan" style="margin:0;border:3px solid ${KAT.bahan.c};${kat==="bahan"?"background:"+KAT.bahan.c+";color:#fff":"background:#fff;color:"+KAT.bahan.c};font-weight:700">🥬 Bahan Baku</button><button data-kat="ops" style="margin:0;border:3px solid ${KAT.ops.c};${kat==="ops"?"background:"+KAT.ops.c+";color:#fff":"background:#fff;color:"+KAT.ops.c};font-weight:700">🧴 Operasional</button></div>
+   <button class="p" id="scan" style="background:${KAT[kat].c}">📷 Scan ${KAT[kat].n}</button><video id="vid" playsinline muted style="display:none;margin-top:8px"></video>
    <input id="kode" placeholder="atau ketik / scan alat: kode barang lalu Enter" autocomplete="off">
-   <select id="pil"><option value="">— atau pilih barang (${items.length}) —</option>${items.map(x=>`<option value="${esc(x.kode)}">${esc(x.nama)} · ${x.jenis==="ops"?"Ops":"Bahan"}</option>`).join("")}</select></div>
+   <select id="pil"><option value="">— atau pilih ${KAT[kat].n.toLowerCase()} (${items.filter(x=>jenisOf(x)===kat).length}) —</option>${items.filter(x=>jenisOf(x)===kat).map(x=>`<option value="${esc(x.kode)}">${esc(x.nama)}</option>`).join("")}</select></div>
    <div class="card" id="form">${cur?formHtml():'<span class="mut">Scan atau pilih barang terlebih dahulu.</span>'}</div>`)+`</main>`;
   document.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{tab=b.dataset.t;cur=null;render()});
   $("out").onclick=e=>{e.preventDefault();if(queue.length&&!confirm("Ada data belum terkirim, tetap keluar?"))return;sess=null;LS("g_sess",null);render()};
   if(tk){$("sync").onclick=async()=>{await flush();await sync();render()};return}
+  document.querySelectorAll("[data-kat]").forEach(b=>b.onclick=()=>{kat=b.dataset.kat;LS("g_kat",kat);cur=null;render()});
   $("scan").onclick=startScan;$("pil").onchange=e=>pick(e.target.value);
   $("kode").onkeydown=e=>{if(e.key==="Enter"){pick($("kode").value.trim());e.target.value=""}};
   if(cur)bindForm();
 }
-function formHtml(){const it=items.find(x=>x.kode===cur);return`<b>${esc(it.nama)}</b><div class="mut">Kode ${esc(it.kode)} · Stok saat ini: ${saldo(it.kode)} ${esc(it.satuan)}</div>
+function formHtml(){const it=items.find(x=>x.kode===cur);return`${badge(jenisOf(it))} <b>${esc(it.nama)}</b><div class="mut">Kode ${esc(it.kode)} · Stok saat ini: ${saldo(it.kode)} ${esc(it.satuan)}</div>
   <input id="qty" type="number" step="any" inputmode="decimal" placeholder="Jumlah (${esc(it.satuan||"satuan")})"><input id="ket" placeholder="Keterangan (opsional)">
   <button class="${tab==="masuk"?"p":"k"}" id="kirim">${tab==="masuk"?"Simpan Barang Masuk":"Simpan Barang Keluar"}</button>`}
 function bindForm(){$("qty").focus();$("kirim").onclick=()=>{const q=parseFloat($("qty").value);if(!q||q<=0)return toast("Isi jumlah dengan benar");
@@ -58,7 +63,8 @@ function bindForm(){$("qty").focus();$("kirim").onclick=()=>{const q=parseFloat(
   const row={id:"g"+Date.now().toString(36)+Math.random().toString(36).slice(2,6),tgl:today(),tipe:tab,kode:cur,qty:q,ket:$("ket").value.trim(),oleh:sess.username};
   log.push(row);queue.push(row);LS("g_log",log);LS("g_q",queue);cur=null;toast("Tersimpan ✔");render();flush()}}
 function pick(k){k=(k||"").trim();if(!k)return;const it=items.find(x=>x.kode.toLowerCase()===k.toLowerCase())||items.find(x=>x.nama.toLowerCase()===k.toLowerCase());
-  if(!it){toast("Barang tidak ditemukan: "+k);return}cur=it.kode;stopScan();render()}
+  if(!it){toast("Barang tidak ditemukan: "+k);return}
+  if(jenisOf(it)!==kat){toast("⚠ "+it.nama+" = "+KAT[jenisOf(it)].n+". Pilih kategori "+KAT[jenisOf(it)].n+" dulu.");return}cur=it.kode;stopScan();render()}
 async function flush(){if(!queue.length||!sess)return;try{await api({action:"stokAdd",rows:queue});queue=[];LS("g_q",queue);toast("Terkirim ke database ✔")}catch(e){if(e.auth){sess=null;LS("g_sess",null)}toast("Belum terkirim (antrian disimpan): "+e.message)}
   if(!document.hidden)render()}
 async function sync(){try{const r=await api({action:"stokGet"});items=r.items||[];const pend=new Set(queue.map(x=>x.id));log=(r.log||[]).concat(queue.filter(x=>!(r.log||[]).some(l=>l.id===x.id)));LS("g_items",items);LS("g_log",log)}catch(e){toast("Offline – memakai data tersimpan")}}
